@@ -1,0 +1,137 @@
+networks:
+  redpanda_network:
+    driver: bridge
+
+volumes:
+  postgres_data: null
+  redpanda: null
+
+services:
+  ####################
+  #     Postgres     #
+  ####################
+  postgres:
+    image: postgres:15
+    container_name: postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./data:/docker-entrypoint-initdb.d/data
+    networks:
+      - redpanda_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+  ####################
+  #     Redpanda     #
+  ####################
+  redpanda:
+    container_name: redpanda
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.14
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --default-log-level=info
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    networks:
+      - redpanda_network
+    ports:
+      - 18081:18081
+      - 18082:18082
+      - 19092:19092
+      - 19644:9644
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 15s
+      retries: 10
+    depends_on:
+      postgres:
+        condition: service_healthy
+  ####################
+  # Redpanda Console #
+  ####################
+  console:
+    container_name: redpanda-console
+    image: docker.redpanda.com/redpandadata/console:v3.1.1
+    networks:
+      - redpanda_network
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml && /app/console'
+    environment:
+      CONFIG_FILEPATH: ${CONFIG_FILEPATH:-/tmp/config.yml}
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+        schemaRegistry:
+          enabled: true
+          urls: ["http://redpanda:8081"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    ports:
+      - 8080:8080
+    depends_on:
+      redpanda:
+        condition: service_healthy
+  ####################
+  #  Schema Registry #
+  ####################
+  registerschema:
+    container_name: redpanda-register-schema
+    command:
+      - registry
+      - schema
+      - create
+      - quotes-value
+      - --schema
+      - /etc/redpanda/quotes.avsc
+      - -X registry.hosts=redpanda:8081
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.14
+    volumes:
+      - ./quotes.avsc:/etc/redpanda/quotes.avsc
+    networks:
+      - redpanda_network
+    depends_on:
+      redpanda:
+        condition: service_healthy
+  ####################
+  # Redpanda Connect #
+  ####################
+  connect:
+    container_name: redpanda-connect
+    image: docker.redpanda.com/redpandadata/connect:4.55.1
+    networks:
+      - redpanda_network
+    environment:
+      - REDPANDA_LICENSE_FILEPATH=/redpanda.license
+    volumes:
+      - ./connect.yaml:/connect.yaml
+      - ./redpanda.license:/redpanda.license
+    command: ["run"]
+    depends_on:
+      - postgres
+      - registerschema

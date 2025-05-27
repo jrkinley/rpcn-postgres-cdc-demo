@@ -1,0 +1,41 @@
+input:
+  label: postgres_cdc
+  postgres_cdc:
+    dsn: postgres://postgres:password@postgres_db:5432/postgres?sslmode=disable
+    stream_snapshot: true
+    schema: public
+    tables:
+      - quotes
+    temporary_slot: true
+    slot_name: quotes_cdc_slot
+pipeline:
+  processors:
+    - try:
+      - mapping: |
+          meta topic = this.symbol
+          root = this
+      - schema_registry_encode:
+          url: "http://redpanda:18081"
+          subject: quotes-value
+          refresh_period: 1m
+    - catch:
+      - log:
+          level: ERROR
+          message: "Processing failed due to: ${!error()}"
+output:
+  fallback:
+    - reject_errored:
+        label: produce_to_kafka
+        kafka_franz:
+          seed_brokers: [ "redpanda:9092" ]
+          topic: quotes_${! meta("topic") }
+          max_in_flight: 1
+          batching:
+            count: 1
+    - drop: {}
+      processors:
+        - mapping: |
+            root.error = metadata("fallback_error")
+        - log:
+            level: ERROR
+            message: "Unable to produce message: ${!json(\"error\")}"
