@@ -26,7 +26,8 @@ postgres=# SELECT symbol, min(date) AS min_date, max(date) AS max_date, count(*)
 # Check snapshot has been streamed into Redpanda topics: 
 # http://localhost:8080/topics
 
-postgres=# INSERT INTO quotes VALUES (default, 'AAPL', '2024-12-06', '$242.84', 36870620, '$242.905', '$244.63', '$242.08');
+postgres=# INSERT INTO quotes VALUES (default, 'AAPL', '2024-12-06', '$243.00', 36870620, '$242.905', '$244.63', '$242.08');
+postgres=# UPDATE quotes SET close='$242.84' WHERE date='2024-12-06';
 
 postgres=# SELECT * FROM quotes WHERE symbol = 'AAPL' ORDER BY date DESC LIMIT 5;
   id  | symbol |    date    |  close  |  volume  |   open   |  high   |   low

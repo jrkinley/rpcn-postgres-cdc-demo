@@ -1,3 +1,7 @@
+logger:
+  level: DEBUG
+  format: logfmt
+  add_timestamp: false
 input:
   label: postgres_cdc
   postgres_cdc:
@@ -14,6 +18,9 @@ pipeline:
       - mapping: |
           meta topic = this.symbol
           root = this
+      - log:
+          level: DEBUG
+          message: "Processing quote change: ${! json()}"
       - schema_registry_encode:
           url: "http://redpanda:18081"
           subject: quotes-value
